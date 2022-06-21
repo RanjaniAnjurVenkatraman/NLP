@@ -1,0 +1,389 @@
+---
+title: "Assignment3-Anjur_Venkatraman-Coursera_Course_Reviews"
+author: "Ranjani Anjur Venkatraman"
+date: "11/15/2019"
+output: html_document
+---
+
+```{r global_options}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE)
+```
+
+## Introduction
+
+In order to perform Natural Language Processing and Text mining, I have selected **"100K Coursera's Course Reviews Dataset"** from Kaggle. The name of CSV file is **reviews_by_course.csv**. Totally there are **140321 rows** and **3 columns**.The link of kaggle page is "https://www.kaggle.com/septa97/100k-courseras-course-reviews-dataset".
+
+### Field Description
+
+-  CourseId: The name of the course(course tag) 
+-  Review: The reviews of various courses in text form
+-  Label: Rating given for each course review
+
+## Load Packages
+
+Load necessay packages required for this assignment.
+
+```{r}
+library(widyr)
+library(textdata)
+library(readr)
+library(tidytext) 
+library(stringr) 
+library(tidyverse)
+library(data.table)
+library(knitr)
+library(kableExtra)
+library(dplyr)
+library(ggplot2)
+library(tidytext)
+library(RColorBrewer)
+library(wordcloud)
+library(reshape2)
+library(hunspell)
+library(SnowballC)
+library(xtable)
+library(NLP)
+library(tm)
+library(stringr)
+library(broom)
+
+```
+
+## Reading Data
+
+The data in CSV is stored in coursera dataframe
+
+```{r}
+
+coursera<-as.data.frame(fread("reviews_by_course.csv"))
+coursera <- as_tibble(coursera)
+x <- head(coursera, n = 10)
+kable(x)%>%
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "left")
+
+```
+
+## Data Preprocessing
+
+Removing all the unwanted special characters from Review text.
+
+```{r}
+
+removeSpecialChars <- function(x) gsub("[^a-zA-Z0-9 ]", "", x)
+coursera$Review <- sapply(coursera$Review, removeSpecialChars)
+
+coursera$Review <- iconv(coursera$Review, from = 'UTF-8', to = 'ASCII//TRANSLIT')
+coursera$Review  = gsub("!", "", coursera$Review)
+coursera$Review <- gsub("[_]", "", coursera$Review)
+coursera$Review <- gsub("<br />", "", coursera$Review)
+head(coursera$Review,10) %>% kable()%>%
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "left")
+
+```
+
+## Tokenization
+
+Token is defined as meaningful part of text(most often a word), which can be used for further text analysis.Tokenization is the process of splitting sentences into words(tokens).
+
+```{r}
+tokens_df <- coursera %>%  unnest_tokens(word, Review)
+head(tokens_df,5) %>% kable()%>%
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "left")
+```
+
+## Stemming Words
+
+After tokenization, we need to analyze each word by breaking it down in it’s root (stemming) and conjugation affix.
+
+```{r}
+getStemLanguages() %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F, position = "left")
+```
+
+```{r}
+tokens_df$word <- wordStem(tokens_df$word,  language = "english")
+```
+
+## Punctuation are removed and tokens converted to lowercase
+
+```{r}
+head(table(tokens_df$word)) %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F, position = "left")
+
+```
+
+## Removing Stopwords
+
+Stopwords are words which are not useful for text analysis, so tt is essential to remove it before performing any analysis. Some of the example of stopwords are 'to','a','of' and 'the' etc. 
+
+```{r}
+get_stopwords()
+tokens_df <- tokens_df %>%  anti_join(get_stopwords(),"word")
+head(tokens_df,5) %>% kable()%>%
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "left")
+
+```
+
+## Removing Numbers
+
+Removing the numbers which are not need for text analysis.
+
+```{r}
+nums <- tokens_df %>%   filter(str_detect(word, "^[0-9]")) %>%   select(word) %>% unique() 
+head(nums) %>% kable() 
+
+tokens_df <- tokens_df %>%   anti_join(nums, by = "word")
+```
+
+## Removing Rare words
+
+Removing the words which doesnt occur often. We have almost 50 K unique words.
+
+```{r}
+length(unique(tokens_df$word))
+```
+
+But those words appear rarely.
+
+```{r}
+tokens_df %>%   count(word, sort = T) %>%  rename(word_freq = n) %>%  ggplot(aes(x=word_freq)) +  geom_histogram(aes(y=..count..), color="black", fill="blue", alpha=0.3) +  scale_x_continuous(breaks=c(0:5,10,100,500,10e3), trans="log1p", expand=c(0,0)) +  scale_y_continuous(breaks=c(0,100,1000,5e3,10e3,5e4,10e4,4e4), expand=c(0,0)) +  theme_bw()
+```
+
+So it makes sense to remove rare words to improve the performance of text analytics.Removing words that have less than 10 appearances.
+
+```{r}
+rare <- tokens_df %>%   count(word) %>%  filter(n<10) %>%  select(word) %>% unique()
+head(rare) %>% kable() 
+
+tokens_df <- tokens_df %>%   filter(!word %in% rare$word) 
+length(unique(tokens_df$word))
+
+```
+
+## Most common words
+
+Here we are finding the common word which are found in whole reviews.
+
+```{r}
+
+xtable(head(tokens_df %>% 
+              count(word, sort = TRUE))) %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F, position = "left")
+
+```
+
+## Visulization 1: Most Common words
+
+Below visulization gives an idea about the most frequently used word aross various reviews. We can see that **cour** is very common word which is used in various reviews and has more than 75000 occurences. 
+```{r}
+
+tokens_df %>% 
+  count(word, sort = TRUE) %>% 
+  filter(n > 5000) %>% 
+  mutate(word = reorder(word, n)) %>% 
+  ggplot(aes(word, n)) + 
+  geom_col() + 
+  xlab(NULL) + 
+  coord_flip()
+
+```
+
+## Sentiment Analysis
+
+Sentiment analysis is typically performed based on a lexicon of sentiment keywords. There are three such sentiment lexicons in tidytext: 
+-  The nrc lexicon: word and their sentiment category 
+-  The bing lexicon: word and their polarity (negative or positive) 
+-  The affin lexicon: word and their numeric sentiment score
+
+```{r}
+
+sent_reviews = tokens_df %>%   left_join(get_sentiments("nrc")) %>%  rename(nrc = sentiment) %>%  left_join(get_sentiments("bing")) %>%  rename(bing = sentiment) %>%  left_join(get_sentiments("afinn")) %>%  rename(afinn = value)
+head(sent_reviews) %>% kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F, position = "left")
+
+
+```
+
+#### Using Bing to find the emotional content of text
+
+```{r}
+
+Sentiment_Analysis <- tokens_df %>% 
+  inner_join(get_sentiments("bing"), "word") %>% 
+  count(CourseId, sentiment) %>% 
+  spread(sentiment, n, fill = 0) %>% 
+  mutate(sentiment = positive - negative)
+
+```
+
+#### One way to analyze the sentiment of a text is to consider the text as a combination of its individual word, and the sentiment content of the whole text as the sum of the sentiment content of the individual words.
+
+```{r}
+head(Sentiment_Analysis)%>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F, position = "left")
+```
+
+## Visulization 2: Most common Positive and Negative Words based on sentiment
+
+Below visulization shows top 10 positive and negative words based on bing sentiment analysis. We can see that **great** is top positive word and **poor** is bottom negative word.
+
+```{r}
+Sentiment_Analysis_Word_Count <- tokens_df %>% 
+  inner_join(get_sentiments("bing"), "word") %>% 
+  count(word, sentiment, sort = TRUE) %>% 
+  ungroup()
+
+Sentiment_Analysis_Word_Count %>% 
+  group_by(sentiment) %>% 
+  top_n(10, n) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n, fill = sentiment)) + 
+  geom_col(show.legend = FALSE) + 
+  facet_wrap(~sentiment, scales = "free_y") + 
+  labs(y = "Contribution to Sentiment", x = NULL) + 
+  coord_flip()
+
+```
+
+## Visulization 3: Words with the greatest contributions to positive/negative sentiment scores in the Review
+
+From below visualization we can infer that **good** has positive sentiment which has high occurances in overall review text. In the same way **problem** has negative sentiment which has high occurances in overall review text.
+
+```{r}
+bing_word_counts <- sent_reviews %>%  filter(!is.na(bing)) %>%  count(word, bing, sort = TRUE) 
+bing_word_counts
+
+bing_word_counts %>%  filter(n > 800) %>%  mutate(n = ifelse(bing == "negative", -n, n)) %>%  mutate(word = reorder(word, n)) %>%  ggplot(aes(word, n, fill = bing)) +  geom_col() +  coord_flip() +  labs(y = "Contribution to sentiment")
+
+```
+
+## Bi-grams
+
+A bigram is an n-gram for n=2. It is basically a pair a consecutive occuring words.
+
+```{r}
+bigrams <- tokens_df %>%  unnest_tokens(bigram, word,token = "ngrams", n = 2) 
+bigrams %>% select(bigram)
+
+head(bigrams)%>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F, position = "left")
+```
+
+## Removing stop words in bigrams
+```{r}
+bigrams_separated <- bigrams %>%  separate(bigram, c("word1", "word2"), sep = " ") 
+bigrams_filtered <- bigrams_separated %>%  filter(!word1 %in% stop_words$word) %>%  filter(!word2 %in% stop_words$word)
+bigrams_filtered %>%   count(word1, word2, sort = TRUE) 
+
+
+```
+
+
+## Word correlation
+
+To reduce the complexity by removing uncommon words.
+
+```{r}
+
+uncommon <- tokens_df %>%
+  count(word) %>%
+  filter(n<1000) %>% #remove uncommon words
+  # < 1000 reviews
+  select(word) %>% distinct()
+
+word_cor = tokens_df %>%
+  filter(!word %in% uncommon$word) %>%
+  widyr::pairwise_cor(word, CourseId) %>%
+  filter(!is.na(correlation),
+         correlation > .25)
+
+head(word_cor) %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F, position = "left")
+
+```
+
+## Document term matrix
+
+A document-term matrix or term-document matrix is a mathematical matrix that describes the frequency of terms that occur in a collection of documents. In a document-term matrix, rows correspond to documents in the collection and columns correspond to terms.
+
+-  We can cast a one-token-per-row table into a document term matrix with tidytext's 
+
+```{r}
+
+
+word_counts_by_course_id <- tokens_df %>%  group_by(CourseId) %>%  count(word, sort = TRUE)
+review_dtm <- word_counts_by_course_id %>%  cast_dtm(CourseId, word, n) 
+  
+```
+
+## Topic modeling
+
+Topic models are algorithms for discovering the main themes that pervade a large and otherwise unstructured collection of documents.Latent Dirichlet Allocation is a particularly popular method for fitting a topic model.
+
+#### I have created topic modeling using 5 topics, in which each topic consist of 10 terms.
+
+```{r}
+library(topicmodels)
+lda5 <- LDA(review_dtm, k = 5, control = list(seed = 1234)) 
+terms(lda5, 10)
+```
+
+####  For each combination the model has the probability of that term being generated from that topic.
+
+```{r}
+lda5_betas <- broom::tidy(lda5) 
+head(lda5_betas) %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F, position = "left")
+```
+
+```{r}
+top_terms_in_topics <- lda5_betas %>%  group_by(topic) %>%  top_n(5, beta) %>%  ungroup() %>%  arrange(topic, -beta)
+head(top_terms_in_topics) %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F, position = "left")
+
+```
+
+## TF-IDF
+
+Term Frequency (tf):It is one measure of how important a word may be and how frenquently a word occurs in a document. Inverse Document Frequency (idf): It decreases the weight for commonly used words and increases the weight for words that are not used very much in a collection of documents. Calculating tf-idf attemps to find the words that are importantin a text, but not too common. The statistic tf-idf (the two quantities multiplied together) is useful to measure how important a word is to a document in a collection of documents.
+
+```{r}
+term_frequency_review <- tokens_df %>% count(word, sort = TRUE)
+
+term_frequency_review$total_words <- as.numeric(term_frequency_review %>% summarize(total = sum(n)))
+
+term_frequency_review$document <- as.character("Review")
+
+term_frequency_review <- term_frequency_review %>% 
+  bind_tf_idf(word, document, n)
+
+```
+## Visualization 4: TF-IDF
+
+Below plot shows the importance of text to a document in a corpus of documents. From the plot we can see top 15 essential words with **cours** being top of chart. 
+
+```{r}
+
+term_frequency_review %>% 
+  arrange(desc(tf)) %>% 
+  mutate(word = factor(word, levels = rev(unique(word)))) %>% 
+  group_by(document) %>% 
+  top_n(15, tf) %>% 
+  ungroup() %>% 
+  ggplot(aes(word, tf, fill = document)) + 
+  geom_col(show.legend = FALSE) + 
+  labs(x = NULL, y = "tf-idf") + 
+  facet_wrap(~document, ncol = 2, scales = "free") + 
+  coord_flip()
+
+```
+
